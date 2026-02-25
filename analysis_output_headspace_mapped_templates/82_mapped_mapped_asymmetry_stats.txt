@@ -1,0 +1,63 @@
+============================================================
+Overall Statistics
+============================================================
+Max: 10.123297 mm
+MSE: 14.942239 mm²
+RMSE: 3.865519 mm
+MAD: 1.937481 mm
+% within 0.5mm: 2.03%
+Mean: 3.069910 mm
+Median: 2.112905 mm
+Std: 2.349019 mm
+
+============================================================
+Statistics by Region
+============================================================
+
+Region 1 (Forehead):
+  Vertices: 850
+  Max: 10.017733 mm
+  MSE: 15.578559 mm²
+  RMSE: 3.946968 mm
+  MAD: 1.923232 mm
+  % within 0.5mm: 1.06%
+
+Region 2 (Upper Cheeks):
+  Vertices: 667
+  Max: 10.123297 mm
+  MSE: 17.776045 mm²
+  RMSE: 4.216165 mm
+  MAD: 2.026012 mm
+  % within 0.5mm: 2.85%
+
+Region 3 (Lower Cheeks):
+  Vertices: 2318
+  Max: 10.123297 mm
+  MSE: 14.331898 mm²
+  RMSE: 3.785749 mm
+  MAD: 1.918928 mm
+  % within 0.5mm: 2.29%
+
+Region 4 (Upper Nose Bridge):
+  Vertices: 760
+  Max: 10.084067 mm
+  MSE: 13.989466 mm²
+  RMSE: 3.740249 mm
+  MAD: 2.040507 mm
+  % within 0.5mm: 2.50%
+
+Region 5 (Lower Nose Bridge):
+  Vertices: 400
+  Max: 10.009129 mm
+  MSE: 12.734873 mm²
+  RMSE: 3.568595 mm
+  MAD: 1.772795 mm
+  % within 0.5mm: 1.50%
+
+Region 6 (Chin):
+  Vertices: 2165
+  Max: 10.009129 mm
+  MSE: 15.215127 mm²
+  RMSE: 3.900657 mm
+  MAD: 1.899877 mm
+  % within 0.5mm: 1.80%

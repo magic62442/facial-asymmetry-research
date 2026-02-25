@@ -1,0 +1,74 @@
+============================================================
+Overall Statistics
+============================================================
+Mean: 2.666994 mm
+Median: 0.000000 mm
+Std: 5.485897 mm
+Min: 0.000000 mm
+Max: 23.993799 mm
+MSE: 37.207919 mm²
+RMSE: 6.099829 mm
+
+============================================================
+Statistics by Region
+============================================================
+
+Region 1:
+  Vertices: 850
+  Mean: 0.000000 mm
+  Median: 0.000000 mm
+  Std: 0.000000 mm
+  Min: 0.000000 mm
+  Max: 0.000000 mm
+  MSE: 0.000000 mm²
+  RMSE: 0.000000 mm
+
+Region 2:
+  Vertices: 667
+  Mean: 0.000000 mm
+  Median: 0.000000 mm
+  Std: 0.000000 mm
+  Min: 0.000000 mm
+  Max: 0.000000 mm
+  MSE: 0.000000 mm²
+  RMSE: 0.000000 mm
+
+Region 3:
+  Vertices: 2318
+  Mean: 0.008571 mm
+  Median: 0.000000 mm
+  Std: 0.057899 mm
+  Min: 0.000000 mm
+  Max: 0.453098 mm
+  MSE: 0.003426 mm²
+  RMSE: 0.058530 mm
+
+Region 4:
+  Vertices: 760
+  Mean: 0.000000 mm
+  Median: 0.000000 mm
+  Std: 0.000000 mm
+  Min: 0.000000 mm
+  Max: 0.000000 mm
+  MSE: 0.000000 mm²
+  RMSE: 0.000000 mm
+
+Region 5:
+  Vertices: 400
+  Mean: 0.046022 mm
+  Median: 0.000000 mm
+  Std: 0.172640 mm
+  Min: 0.000000 mm
+  Max: 0.856370 mm
+  MSE: 0.031923 mm²
+  RMSE: 0.178669 mm
+
+Region 6:
+  Vertices: 2165
+  Mean: 8.802495 mm
+  Median: 7.701180 mm
+  Std: 6.749743 mm
+  Min: 0.461601 mm
+  Max: 23.993799 mm
+  MSE: 123.042953 mm²
+  RMSE: 11.092473 mm

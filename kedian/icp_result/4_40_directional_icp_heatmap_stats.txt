@@ -1,0 +1,60 @@
+============================================================
+Overall Statistics
+============================================================
+Max: 2.027428 mm
+MSE: 0.349700 mm²
+RMSE: 0.591355 mm
+MAD: 0.261751 mm
+% within 0.5mm: 65.54%
+
+============================================================
+Statistics by Region
+============================================================
+
+Region 1:
+  Vertices: 850
+  Max: 1.688744 mm
+  MSE: 0.121122 mm²
+  RMSE: 0.348026 mm
+  MAD: 0.153773 mm
+  % within 0.5mm: 88.71%
+
+Region 2:
+  Vertices: 667
+  Max: 1.181529 mm
+  MSE: 0.251060 mm²
+  RMSE: 0.501059 mm
+  MAD: 0.155411 mm
+  % within 0.5mm: 59.22%
+
+Region 3:
+  Vertices: 2318
+  Max: 1.750392 mm
+  MSE: 0.223845 mm²
+  RMSE: 0.473122 mm
+  MAD: 0.158012 mm
+  % within 0.5mm: 69.15%
+
+Region 4:
+  Vertices: 760
+  Max: 0.538285 mm
+  MSE: 0.055382 mm²
+  RMSE: 0.235334 mm
+  MAD: 0.110879 mm
+  % within 0.5mm: 98.42%
+
+Region 5:
+  Vertices: 400
+  Max: 0.987583 mm
+  MSE: 0.200861 mm²
+  RMSE: 0.448175 mm
+  MAD: 0.196689 mm
+  % within 0.5mm: 63.50%
+
+Region 6:
+  Vertices: 2165
+  Max: 2.027428 mm
+  MSE: 0.735398 mm²
+  RMSE: 0.857553 mm
+  MAD: 0.423555 mm
+  % within 0.5mm: 43.37%

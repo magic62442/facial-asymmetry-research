@@ -1,0 +1,8 @@
+newmtl 131020130131_mapped
+ka 0.3 0.3 0.3
+kd 0.8 0.8 0.8
+ks 0 0 0
+illum 0
+map_Ka 131020130131_mapped.png
+map_Kd 131020130131_mapped.png
+map_Ks 131020130131_mapped.png
