@@ -13,6 +13,9 @@ csv_files = {
     'kedian_GT': 'kedian/ground_truth/ground_truth_summary_statistics.csv',
     'kedian_ICP': 'kedian/icp_result/icp_summary_statistics.csv',
     'kedian_MeshMonk': 'kedian/meshmonk/meshmonk_summary_statistics.csv',
+    'xiahedian_GT': 'xiahedian/ground_truth/ground_truth_summary_statistics.csv',
+    'xiahedian_ICP': 'xiahedian/icp_result/icp_summary_statistics.csv',
+    'xiahedian_MeshMonk': 'xiahedian/meshmonk/meshmonk_summary_statistics.csv',
     'ppdh_MeshMonk': 'analysis_output_ppdh_mapped_templates/summary_statistics.csv',
     'headspace_MeshMonk': 'analysis_output_headspace_mapped_templates/summary_statistics.csv',
 }

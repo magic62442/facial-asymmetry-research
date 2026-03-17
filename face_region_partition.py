@@ -3,7 +3,7 @@
 """
 Face Region Partition Script
 
-根据CSV文件中的7个点将面部网格分成6个区域。
+根据CSV文件中的7个点将面部网格分成7个区域。
 只使用x,y坐标进行分区判断。
 
 区域定义:
@@ -12,7 +12,8 @@ Face Region Partition Script
 - 区域3: 剩余部分中l6以下的点 (y <= v7.y)
 - 区域4: l2, l3, l4, l5, l7之间的区域
 - 区域5: l7, l8, l4, l5之间的区域
-- 区域6: l8以下的点 (y < v5.y)
+- 区域6: l8以下且位于l4和l5之间的点
+- 区域7: l8以下且位于l4左侧或l5右侧的点
 
 其中:
 - l1: y = v1.y
@@ -73,6 +74,92 @@ def point_side_of_line(px, py, x1, y1, x2, y2):
     return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
 
 
+def get_v5_mirror(v5):
+    """返回v5关于y-z平面的镜像点。"""
+    return np.array([-v5[0], v5[1], v5[2]])
+
+
+def interpolate_x_at_y(y, start, end):
+    """在线段/延长线上计算给定y处的x坐标。"""
+    if end[1] == start[1]:
+        return start[0]
+
+    t = (y - start[1]) / (end[1] - start[1])
+    return start[0] + t * (end[0] - start[0])
+
+
+def get_l4_l5_bounds_at_y(y, v2, v3, v5):
+    """返回给定y处，l4和l5对应的左右边界x坐标。"""
+    v5_mirror = get_v5_mirror(v5)
+    x_left = interpolate_x_at_y(y, v2, v5)
+    x_right = interpolate_x_at_y(y, v3, v5_mirror)
+    return x_left, x_right
+
+
+def choose_projection_variant(points_camera, intrinsic, image_width, image_height):
+    """选择与Open3D截图最匹配的屏幕坐标投影方向。"""
+    fx = intrinsic[0, 0]
+    fy = intrinsic[1, 1]
+    cx = intrinsic[0, 2]
+    cy = intrinsic[1, 2]
+
+    best_variant = None
+    best_score = -1
+
+    for z_sign in (1.0, -1.0):
+        denom = points_camera[:, 2] * z_sign
+        valid = np.abs(denom) > 1e-8
+        if not np.any(valid):
+            continue
+
+        u = np.full(len(points_camera), np.nan)
+        v = np.full(len(points_camera), np.nan)
+        u[valid] = fx * points_camera[valid, 0] / denom[valid] + cx
+        v_base = fy * points_camera[valid, 1] / denom[valid] + cy
+
+        for flip_y in (False, True):
+            v[valid] = image_height - v_base if flip_y else v_base
+            in_bounds = (
+                valid
+                & (u >= 0)
+                & (u <= image_width)
+                & (v >= 0)
+                & (v <= image_height)
+            )
+            score = int(np.sum(in_bounds))
+            if score > best_score:
+                best_score = score
+                best_variant = (z_sign, flip_y)
+
+    return best_variant
+
+
+def project_points_to_image(points, camera_params, image_width, image_height, variant):
+    """把3D点投影到截图像素坐标。"""
+    intrinsic = np.asarray(camera_params.intrinsic.intrinsic_matrix)
+    extrinsic = np.asarray(camera_params.extrinsic)
+
+    points_h = np.hstack([points, np.ones((len(points), 1))])
+    points_camera = (extrinsic @ points_h.T).T[:, :3]
+
+    fx = intrinsic[0, 0]
+    fy = intrinsic[1, 1]
+    cx = intrinsic[0, 2]
+    cy = intrinsic[1, 2]
+    z_sign, flip_y = variant
+
+    denom = points_camera[:, 2] * z_sign
+    valid = np.abs(denom) > 1e-8
+
+    u = np.full(len(points), np.nan)
+    v = np.full(len(points), np.nan)
+    u[valid] = fx * points_camera[valid, 0] / denom[valid] + cx
+    v_base = fy * points_camera[valid, 1] / denom[valid] + cy
+    v[valid] = image_height - v_base if flip_y else v_base
+
+    return np.column_stack([u, v]), valid
+
+
 def is_point_in_region_4(px, py, v1, v2, v3, v4, v5):
     """
     判断点是否在区域4内
@@ -94,7 +181,7 @@ def is_point_in_region_4(px, py, v1, v2, v3, v4, v5):
         return False
 
     # v5的镜像点
-    v5_mirror = np.array([-v5[0], v5[1], v5[2]])
+    v5_mirror = get_v5_mirror(v5)
 
     # 对于x >= 0的点，检查是否在l2和l4的右侧
     # 对于x < 0的点，检查是否在l3和l5的左侧
@@ -144,7 +231,7 @@ def is_point_in_region_5(px, py, v4, v5, v7, v3):
         return False
 
     # v5的镜像点
-    v5_mirror = np.array([-v5[0], v5[1], v5[2]])
+    v5_mirror = get_v5_mirror(v5)
 
     # 需要在l4和l5之间
     # l4是v2-v5的延长线，但这里我们用v5的位置来判断
@@ -177,7 +264,7 @@ def is_point_in_region_5(px, py, v4, v5, v7, v3):
 
 def partition_face(obj_path, csv_path, output_txt="region_labels.txt", reorder=False):
     """
-    根据CSV中的7个点将面部网格分成6个区域
+    根据CSV中的7个点将面部网格分成7个区域
 
     参数:
         obj_path: OBJ文件路径
@@ -221,7 +308,7 @@ def partition_face(obj_path, csv_path, output_txt="region_labels.txt", reorder=F
         print(f"  v{i+1}: ({v[0]:.4f}, {v[1]:.4f})")
 
     # v5的镜像点
-    v5_mirror = np.array([-v5[0], v5[1], v5[2]])
+    v5_mirror = get_v5_mirror(v5)
     print(f"  v5_mirror: ({v5_mirror[0]:.4f}, {v5_mirror[1]:.4f})")
 
     # 3. 定义分界线
@@ -247,9 +334,13 @@ def partition_face(obj_path, csv_path, output_txt="region_labels.txt", reorder=F
             region_labels[i] = 1
             continue
 
-        # 区域6: y < v5.y (l8以下)
+        # l8以下拆分为区域6和区域7
         if py < v5[1]:
-            region_labels[i] = 6
+            x_left, x_right = get_l4_l5_bounds_at_y(py, v2, v3, v5)
+            if x_left <= px <= x_right:
+                region_labels[i] = 6
+            else:
+                region_labels[i] = 7
             continue
 
         # 检查区域4: l2, l3, l4, l5, l7之间
@@ -261,34 +352,18 @@ def partition_face(obj_path, csv_path, output_txt="region_labels.txt", reorder=F
             # 计算左边界x值 (l2或l4)
             if py >= v2[1]:
                 # 在v2以上，用l2 (v1-v2)
-                if v2[1] != v1[1]:
-                    t2 = (py - v1[1]) / (v2[1] - v1[1])
-                    x_left = v1[0] + t2 * (v2[0] - v1[0])
-                else:
-                    x_left = v2[0]
+                x_left = interpolate_x_at_y(py, v1, v2)
             else:
                 # 在v2以下，用l4 (v2-v5)
-                if v5[1] != v2[1]:
-                    t4 = (py - v2[1]) / (v5[1] - v2[1])
-                    x_left = v2[0] + t4 * (v5[0] - v2[0])
-                else:
-                    x_left = v2[0]
+                x_left = interpolate_x_at_y(py, v2, v5)
 
             # 计算右边界x值 (l3或l5)
             if py >= v3[1]:
                 # 在v3以上，用l3 (v1-v3)
-                if v3[1] != v1[1]:
-                    t3 = (py - v1[1]) / (v3[1] - v1[1])
-                    x_right = v1[0] + t3 * (v3[0] - v1[0])
-                else:
-                    x_right = v3[0]
+                x_right = interpolate_x_at_y(py, v1, v3)
             else:
                 # 在v3以下，用l5 (v3-v5_mirror)
-                if v5_mirror[1] != v3[1]:
-                    t5 = (py - v3[1]) / (v5_mirror[1] - v3[1])
-                    x_right = v3[0] + t5 * (v5_mirror[0] - v3[0])
-                else:
-                    x_right = v3[0]
+                x_right = interpolate_x_at_y(py, v3, v5_mirror)
 
             # 点在左右边界之间
             if x_left <= px <= x_right:
@@ -302,19 +377,7 @@ def partition_face(obj_path, csv_path, output_txt="region_labels.txt", reorder=F
         # 条件: v5.y <= y < v4.y, 且在l4和l5之间
         in_region_5 = False
         if v5[1] <= py < v4[1]:
-            # 计算左边界x值 (l4: v2-v5)
-            if v5[1] != v2[1]:
-                t4 = (py - v2[1]) / (v5[1] - v2[1])
-                x_left = v2[0] + t4 * (v5[0] - v2[0])
-            else:
-                x_left = v2[0]
-
-            # 计算右边界x值 (l5: v3-v5_mirror)
-            if v5_mirror[1] != v3[1]:
-                t5 = (py - v3[1]) / (v5_mirror[1] - v3[1])
-                x_right = v3[0] + t5 * (v5_mirror[0] - v3[0])
-            else:
-                x_right = v3[0]
+            x_left, x_right = get_l4_l5_bounds_at_y(py, v2, v3, v5)
 
             # 点在左右边界之间
             if x_left <= px <= x_right:
@@ -326,8 +389,8 @@ def partition_face(obj_path, csv_path, output_txt="region_labels.txt", reorder=F
 
         # 剩余部分
         # 区域2: l6以上 (y >= v7.y，但排除区域1,4,5后的剩余部分)
-        # 区域3: l6以下 (y < v7.y，但排除区域6后的剩余部分)
-        # 注意：此时已经排除了区域1,4,5,6
+        # 区域3: l6以下 (y < v7.y，但排除区域6,7后的剩余部分)
+        # 注意：此时已经排除了区域1,4,5,6,7
         # 根据y与v7.y的关系判断区域2还是3
         if py >= v7[1]:
             region_labels[i] = 2
@@ -336,7 +399,7 @@ def partition_face(obj_path, csv_path, output_txt="region_labels.txt", reorder=F
 
     # 5. 统计各区域顶点数
     print("\n分区结果:")
-    for region in range(1, 7):
+    for region in range(1, 8):
         count = np.sum(region_labels == region)
         percentage = count / len(vertices) * 100
         print(f"  区域{region}: {count} 个顶点 ({percentage:.2f}%)")
@@ -393,14 +456,15 @@ def visualize_regions(obj_path, region_labels, output_pdf="region_partition.pdf"
     mesh.compute_vertex_normals()
     vertices = np.asarray(mesh.vertices)
 
-    # 2. 定义6种颜色
+    # 2. 定义7种颜色
     region_colors = {
         1: [1.0, 0.0, 0.0],    # 红色 - 区域1 (额头)
         2: [0.0, 1.0, 0.0],    # 绿色 - 区域2
         3: [0.0, 0.0, 1.0],    # 蓝色 - 区域3
         4: [1.0, 1.0, 0.0],    # 黄色 - 区域4 (鼻梁上部)
         5: [1.0, 0.0, 1.0],    # 洋红 - 区域5 (鼻梁下部)
-        6: [0.0, 1.0, 1.0],    # 青色 - 区域6 (下巴)
+        6: [0.0, 1.0, 1.0],    # 青色 - 区域6 (下巴中部)
+        7: [1.0, 0.5, 0.0],    # 橙色 - 区域7 (下颌两侧)
     }
 
     # 3. 为每个顶点着色
@@ -456,11 +520,12 @@ def visualize_regions(obj_path, region_labels, output_pdf="region_partition.pdf"
             3: "Region 3 (Lower Cheeks)",
             4: "Region 4 (Upper Nose Bridge)",
             5: "Region 5 (Lower Nose Bridge)",
-            6: "Region 6 (Chin)",
+            6: "Region 6 (Lower Center)",
+            7: "Region 7 (Lower Sides)",
         }
 
         y_pos = 0.9
-        for region in range(1, 7):
+        for region in range(1, 8):
             count = np.sum(region_labels == region)
             percentage = count / len(region_labels) * 100
             color = region_colors[region]
@@ -493,17 +558,16 @@ def visualize_regions(obj_path, region_labels, output_pdf="region_partition.pdf"
     print(f"  PDF已保存: {output_pdf}")
 
 
-def visualize_boundaries(obj_path, csv_path, output_pdf="region_boundaries.pdf"):
+def visualize_boundaries(obj_path, csv_path, output_pdf="region_boundaries.png"):
     """
     可视化分区边界线和点，使用正交投影（和view_template一致）
 
     参数:
         obj_path: OBJ文件路径
         csv_path: CSV文件路径（7个点）
-        output_pdf: 输出PDF路径
+        output_pdf: 输出PNG/PDF路径
     """
     import matplotlib.pyplot as plt
-    from matplotlib.backends.backend_pdf import PdfPages
 
     print("\n" + "=" * 80)
     print("Visualize Region Boundaries")
@@ -519,11 +583,12 @@ def visualize_boundaries(obj_path, csv_path, output_pdf="region_boundaries.pdf")
     # 2. 使用和view_template相同的光照设置
     # 单光源从正前方
     light_dir = np.array([0.0, 0.0, 1.0])
-    ambient = 0.3
+    ambient = 0.35
     dot = np.clip(np.sum(normals * light_dir, axis=1), 0, 1)
     intensities = ambient + (1 - ambient) * dot
-    base_color = np.array([1.0, 1.0, 1.0])
-    colors = np.outer(intensities, base_color)
+    base_color = np.array([0.85, 0.85, 0.85])
+    colors = np.tile(base_color, (len(vertices), 1)) * intensities[:, np.newaxis]
+    colors = np.clip(colors, 0, 1)
     mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
 
     # 3. 加载7个点
@@ -534,29 +599,38 @@ def visualize_boundaries(obj_path, csv_path, output_pdf="region_boundaries.pdf")
         return
 
     v1, v2, v3, v4, v5, v6, v7 = landmarks
-    v5_mirror = np.array([-v5[0], v5[1], v5[2]])
+    v5_mirror = get_v5_mirror(v5)
+    v7_mirror = np.array([-v7[0], v7[1], v7[2]])
 
-    # 4. 创建几何对象列表
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    template_landmarks = load_landmarks_from_csv(os.path.join(base_dir, "template landmark.csv"))
+    if len(template_landmarks) > 2:
+        template_landmarks = template_landmarks[:-2]
+    xiahedian = load_landmarks_from_csv(os.path.join(base_dir, "xiahedian.csv"))
+    kedian = load_landmarks_from_csv(os.path.join(base_dir, "kedian.csv"))
+
+    y_offset = 1.5
+    kedian_y_offset = 2.0
+    xiahedian_x_offset = 0.5
+    landmarks_display = landmarks.copy()
+    landmarks_display[6, 1] -= y_offset
+    v7_mirror_display = v7_mirror.copy()
+    v7_mirror_display[1] -= y_offset
+    xiahedian_display = xiahedian.copy()
+    if len(xiahedian_display) > 0:
+        xiahedian_display[:, 0] += np.sign(xiahedian_display[:, 0]) * xiahedian_x_offset
+    xiahedian_mirror = xiahedian.copy()
+    if len(xiahedian_mirror) > 0:
+        xiahedian_mirror[:, 0] *= -1
+        xiahedian_mirror[:, 0] += np.sign(xiahedian_mirror[:, 0]) * xiahedian_x_offset
+    kedian_display = kedian.copy()
+    if len(kedian_display) > 0:
+        kedian_display[:, 1] -= kedian_y_offset
+
+    # 4. 只渲染3D模板脸，点在截图后以2D方式叠加
     geometries = [mesh]
 
-    # 5. 创建点（小球）- 7个原始点 + v5_mirror
-    sphere_radius = 1.0
-    # 原始7个点
-    for i, v in enumerate(landmarks):
-        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=sphere_radius)
-        sphere.translate(v)
-        sphere.paint_uniform_color([1.0, 0.0, 0.0])  # 红色
-        sphere.compute_vertex_normals()
-        geometries.append(sphere)
-
-    # v5_mirror点
-    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=sphere_radius)
-    sphere.translate(v5_mirror)
-    sphere.paint_uniform_color([1.0, 0.0, 0.0])  # 红色
-    sphere.compute_vertex_normals()
-    geometries.append(sphere)
-
-    # 6. 渲染（使用正交投影）
+    # 5. 渲染（使用正交投影）
     print("\n渲染3D模型（正交投影）...")
     vis = o3d.visualization.Visualizer()
     vis.create_window(window_name="Region Boundaries", width=1200, height=900, visible=False)
@@ -567,11 +641,11 @@ def visualize_boundaries(obj_path, csv_path, output_pdf="region_boundaries.pdf")
     # 设置渲染选项（和view_template一致）
     render_option = vis.get_render_option()
     render_option.mesh_show_back_face = True
-    render_option.light_on = False  # 关闭Open3D光照，使用预计算的顶点颜色
+    render_option.light_on = False
 
     # 设置正交投影
     view_ctrl = vis.get_view_control()
-    view_ctrl.change_field_of_view(step=-90)  # 减小FOV接近正交投影
+    view_ctrl.change_field_of_view(step=-90)
 
     vis.poll_events()
     vis.update_renderer()
@@ -580,17 +654,63 @@ def visualize_boundaries(obj_path, csv_path, output_pdf="region_boundaries.pdf")
     vis.capture_screen_image(temp_image, do_render=True)
     vis.destroy_window()
 
-    # 7. 生成PDF（只有一张图）
-    print(f"\n生成PDF: {output_pdf}")
-    with PdfPages(output_pdf) as pdf:
-        fig = plt.figure(figsize=(10, 12))
-        ax = plt.subplot(111)
-        img = plt.imread(temp_image)
-        ax.imshow(img)
-        ax.axis('off')
-        plt.tight_layout()
-        pdf.savefig(fig, dpi=150, bbox_inches='tight', pad_inches=0)
-        plt.close(fig)
+    overlay_point_sets = [landmarks_display, v5_mirror.reshape(1, 3), v7_mirror_display.reshape(1, 3)]
+    if len(template_landmarks) > 0:
+        overlay_point_sets.append(template_landmarks)
+    if len(xiahedian_display) > 0:
+        overlay_point_sets.append(xiahedian_display)
+    if len(xiahedian_mirror) > 0:
+        overlay_point_sets.append(xiahedian_mirror)
+    if len(kedian_display) > 0:
+        overlay_point_sets.append(kedian_display)
+
+    overlay_points = np.vstack(overlay_point_sets)
+    image = plt.imread(temp_image)
+    image_height, image_width = image.shape[:2]
+    background_rgb = image[0, 0, :3]
+    foreground_mask = np.max(np.abs(image[:, :, :3] - background_rgb), axis=2) > 0.02
+
+    image_rgba = np.zeros((image_height, image_width, 4), dtype=image.dtype)
+    image_rgba[:, :, :3] = image[:, :, :3]
+    image_rgba[:, :, 3] = foreground_mask.astype(image.dtype)
+
+    if np.any(foreground_mask):
+        foreground_pixels = np.argwhere(foreground_mask)
+        row_min, col_min = foreground_pixels.min(axis=0)
+        row_max, col_max = foreground_pixels.max(axis=0)
+    else:
+        row_min, col_min = 0, 0
+        row_max, col_max = image_height - 1, image_width - 1
+
+    x_min = np.min(vertices[:, 0])
+    x_max = np.max(vertices[:, 0])
+    y_min = np.min(vertices[:, 1])
+    y_max = np.max(vertices[:, 1])
+
+    projected_points = np.zeros((len(overlay_points), 2))
+    projected_points[:, 0] = col_min + (overlay_points[:, 0] - x_min) * (col_max - col_min) / (x_max - x_min)
+    projected_points[:, 1] = row_min + (y_max - overlay_points[:, 1]) * (row_max - row_min) / (y_max - y_min)
+    valid_mask = (
+        (projected_points[:, 0] >= 0)
+        & (projected_points[:, 0] <= image_width)
+        & (projected_points[:, 1] >= 0)
+        & (projected_points[:, 1] <= image_height)
+    )
+    point_size = 12
+
+    # 6. 生成PNG（透明背景）
+    print(f"\n生成图片: {output_pdf}")
+    fig = plt.figure(figsize=(10, 12))
+    fig.patch.set_alpha(0)
+    ax = plt.subplot(111)
+    ax.set_facecolor('none')
+    ax.imshow(image_rgba)
+    valid_points = projected_points[valid_mask]
+    ax.scatter(valid_points[:, 0], valid_points[:, 1], s=point_size, c='red')
+    ax.axis('off')
+    plt.tight_layout()
+    plt.savefig(output_pdf, dpi=300, bbox_inches='tight', pad_inches=0, transparent=True)
+    plt.close(fig)
 
     # 清理临时文件
     if os.path.exists(temp_image):
@@ -611,7 +731,7 @@ def interactive_view(obj_path, region_labels):
     mesh.compute_vertex_normals()
     vertices = np.asarray(mesh.vertices)
 
-    # 定义6种颜色
+    # 定义7种颜色
     region_colors = {
         1: [1.0, 0.0, 0.0],    # 红色
         2: [0.0, 1.0, 0.0],    # 绿色
@@ -619,6 +739,7 @@ def interactive_view(obj_path, region_labels):
         4: [1.0, 1.0, 0.0],    # 黄色
         5: [1.0, 0.0, 1.0],    # 洋红
         6: [0.0, 1.0, 1.0],    # 青色
+        7: [1.0, 0.5, 0.0],    # 橙色
     }
 
     colors = np.zeros((len(vertices), 3))
@@ -658,7 +779,7 @@ def main():
     parser.add_argument('--obj', default='Template.obj', help='OBJ file path (default: Template.obj)')
     parser.add_argument('--output', default='region_labels.txt', help='Output text file (default: region_labels.txt)')
     parser.add_argument('--pdf', default='region_partition.pdf', help='Output PDF file (default: region_partition.pdf)')
-    parser.add_argument('--boundaries_pdf', default='region_boundaries.pdf', help='Boundaries PDF file (default: region_boundaries.pdf)')
+    parser.add_argument('--boundaries_pdf', default='region_boundaries.png', help='Boundaries image file (default: region_boundaries.png)')
     parser.add_argument('--interactive', action='store_true', help='Show interactive 3D viewer')
     parser.add_argument('--reorder', action='store_true', help='Reorder output from Open3D order to original OBJ order')
 
@@ -680,7 +801,7 @@ def main():
         return
 
     # 可视化分区结果
-    visualize_regions(args.obj, region_labels, args.pdf)
+    # visualize_regions(args.obj, region_labels, args.pdf)
 
     # 可视化分界线
     visualize_boundaries(args.obj, args.csv_file, args.boundaries_pdf)

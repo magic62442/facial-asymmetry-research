@@ -52,9 +52,17 @@ Region 5:
   % within 0.5mm: 19.25%
 
 Region 6:
-  Vertices: 2165
+  Vertices: 1009
   Max: 7.069269 mm
-  MSE: 10.038998 mm²
-  RMSE: 3.168438 mm
-  MAD: 1.634816 mm
-  % within 0.5mm: 14.87%
+  MSE: 12.242602 mm²
+  RMSE: 3.498943 mm
+  MAD: 1.862253 mm
+  % within 0.5mm: 18.53%
+
+Region 7:
+  Vertices: 1156
+  Max: 5.988847 mm
+  MSE: 8.115611 mm²
+  RMSE: 2.848791 mm
+  MAD: 1.391992 mm
+  % within 0.5mm: 11.68%

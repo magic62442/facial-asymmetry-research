@@ -1,0 +1,24 @@
+#
+# Wrap
+#
+# Materials for the file "5_70_directional_mirrored_aligned.obj"
+#
+
+
+newmtl 5_70_directional_1
+   Kd 1.0 1.0 1.0
+   illum 1
+   d 1
+   Ns 6
+   sharpness 60
+   Ni 1
+
+newmtl default
+   Kd 1.0 1.0 1.0
+   illum 1
+   d 1
+   Ns 6
+   sharpness 60
+   Ni 1
+
+# end of file

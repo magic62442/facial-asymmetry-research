@@ -99,14 +99,15 @@ def create_truncated_colorbar(fig, cax, cmap, local_max, cutoff_distance=None, l
     return cax
 
 
-def extract_max_from_filename(filename):
+def extract_max_from_filename(filename, multiplier=2):
     """
-    从文件名中提取第一个数字，乘以2作为colorbar最大值
+    从文件名中提取第一个数字，乘以multiplier作为colorbar最大值
 
-    例如: 2_40_directional_fa_values.csv -> 2 * 2 = 4
+    例如: 2_40_directional_fa_values.csv, multiplier=2 -> 2 * 2 = 4
 
     参数:
         filename: 文件名
+        multiplier: 乘数（默认2，xiahedian使用1）
 
     返回:
         colorbar最大值，如果无法提取则返回None
@@ -116,8 +117,15 @@ def extract_max_from_filename(filename):
     match = re.search(r'(\d+)', filename)
     if match:
         first_number = int(match.group(1))
-        return first_number * 2
+        return first_number * multiplier
     return None
+
+
+def get_region_ids(region_labels):
+    """返回标签数组中所有有效区域ID（忽略0）。"""
+    if region_labels is None:
+        return []
+    return sorted(int(region) for region in np.unique(region_labels) if region > 0)
 
 
 def load_pairing_csv(csv_path):
@@ -139,11 +147,16 @@ def load_pairing_csv(csv_path):
     with open(csv_path, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
         header = next(reader)  # 跳过表头
+        two_col = len(header) < 3  # 兼容2列格式（source_vertex_id, distance_to_surface）
 
         for row in reader:
             source_ids.append(int(row[0]))
-            target_ids.append(int(row[1]))
-            distances.append(float(row[2]))
+            if two_col:
+                target_ids.append(int(row[0]))  # dummy，2列格式无target_id
+                distances.append(float(row[1]))
+            else:
+                target_ids.append(int(row[1]))
+                distances.append(float(row[2]))
 
     return np.array(source_ids), np.array(target_ids), np.array(distances)
 
@@ -242,7 +255,8 @@ def recompute_distances_from_pairing(obj_path, csv_path):
 
 def visualize_pairing_quality(obj_path, csv_path, output_pdf='pairing_quality.pdf', colormap='jet',
                                region_labels_path='region_labels.txt', stats_output_path=None,
-                               max_distance=None, cutoff_distance=None):
+                               max_distance=None, cutoff_distance=None, title='Ground Truth Heatmap',
+                               generate_visualization=True):
     """
     可视化配对质量热力图
 
@@ -255,6 +269,7 @@ def visualize_pairing_quality(obj_path, csv_path, output_pdf='pairing_quality.pd
         stats_output_path: 统计信息输出文件路径（默认与PDF同名但扩展名为.txt）
         max_distance: colorbar最大值（None则自动计算）
         cutoff_distance: 截断值，distance <= cutoff时显示浅灰色
+        generate_visualization: 是否生成热力图/PDF，False时仅输出统计结果
 
     返回:
         统计信息字典
@@ -318,6 +333,7 @@ def visualize_pairing_quality(obj_path, csv_path, output_pdf='pairing_quality.pd
 
     # 5. 加载分区标签
     region_labels = None
+    region_ids = []
     if os.path.exists(region_labels_path):
         print(f"\n加载分区标签: {region_labels_path}")
         region_labels = np.zeros(len(vertices), dtype=int)
@@ -331,151 +347,131 @@ def visualize_pairing_quality(obj_path, csv_path, output_pdf='pairing_quality.pd
                     idx, label = int(parts[0]), int(parts[1])
                     if 0 <= idx < len(vertices):
                         region_labels[idx] = label
-        print(f"  加载完成，共6个区域")
+        region_ids = get_region_ids(region_labels)
+        print(f"  加载完成，共{len(region_ids)}个区域")
 
-    # 6. 创建颜色映射
-    # 对于缺失的距离，使用灰色
-    print(f"\n创建热力图 (颜色方案: {colormap})...")
+    # 6. 创建颜色映射并生成热力图（可选）
+    if generate_visualization:
+        print(f"\n创建热力图 (颜色方案: {colormap})...")
 
-    # 计算colorbar范围
-    # 如果指定了max_distance，使用它作为colorbar范围
-    # 否则使用数据本身的最大值
-    if max_distance is not None:
-        local_max = max_distance
-    else:
-        local_max = valid_distances.max()
+        if max_distance is not None:
+            local_max = max_distance
+        else:
+            local_max = valid_distances.max()
 
-    print(f"  colorbar范围: 0 - {local_max:.6f} mm")
-    if cutoff_distance is not None:
-        print(f"  截断值: {cutoff_distance:.6f} mm (以下显示浅灰色)")
+        print(f"  colorbar范围: 0 - {local_max:.6f} mm")
+        if cutoff_distance is not None:
+            print(f"  截断值: {cutoff_distance:.6f} mm (以下显示浅灰色)")
 
-    cmap = plt.get_cmap(colormap)
+        cmap = plt.get_cmap(colormap)
+        colors = np.zeros((len(vertices), 3))
 
-    # 为每个顶点分配颜色
-    # cutoff以下用灰色，cutoff到local_max使用完整色谱
-    colors = np.zeros((len(vertices), 3))
-
-    for i in range(len(vertices)):
-        if not np.isnan(vertex_distances[i]):
-            if cutoff_distance is not None and vertex_distances[i] <= cutoff_distance:
-                # 低于截断值 - 浅灰色
-                colors[i] = [0.85, 0.85, 0.85]
-            else:
-                # 有效距离 - 使用完整色谱 [cutoff_distance, local_max] -> [0, 1]
-                if cutoff_distance is not None and local_max > cutoff_distance:
-                    normalized_val = (vertex_distances[i] - cutoff_distance) / (local_max - cutoff_distance)
+        for i in range(len(vertices)):
+            if not np.isnan(vertex_distances[i]):
+                if cutoff_distance is not None and vertex_distances[i] <= cutoff_distance:
+                    colors[i] = [0.85, 0.85, 0.85]
                 else:
-                    normalized_val = vertex_distances[i] / local_max
-                normalized_val = min(1.0, max(0.0, normalized_val))  # 限制在 [0, 1]
-                colors[i] = cmap(normalized_val)[:3]  # 取RGB，丢弃alpha
+                    if cutoff_distance is not None and local_max > cutoff_distance:
+                        normalized_val = (vertex_distances[i] - cutoff_distance) / (local_max - cutoff_distance)
+                    else:
+                        normalized_val = vertex_distances[i] / local_max
+                    normalized_val = min(1.0, max(0.0, normalized_val))
+                    colors[i] = cmap(normalized_val)[:3]
+            else:
+                colors[i] = [0.5, 0.5, 0.5]
+
+        mesh.compute_vertex_normals()
+        normals = np.asarray(mesh.vertex_normals)
+
+        light_dir = np.array([0.0, 0.0, 1.0])
+        ambient = 0.3
+        dot = np.clip(np.sum(normals * light_dir, axis=1), 0, 1)
+        intensities = ambient + (1 - ambient) * dot
+
+        colors = colors * intensities[:, np.newaxis]
+        mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
+
+        print("\n生成热力图...")
+        print("  使用Open3D渲染...")
+
+        temp_image = "temp_pairing_quality_heatmap.png"
+        vis_capture = o3d.visualization.Visualizer()
+        vis_capture.create_window(window_name="Capture", width=1200, height=900, visible=False)
+        vis_capture.add_geometry(mesh)
+
+        render_option_capture = vis_capture.get_render_option()
+        render_option_capture.mesh_show_back_face = True
+        render_option_capture.light_on = False
+
+        view_control_capture = vis_capture.get_view_control()
+        view_control_capture.change_field_of_view(step=-90)
+
+        vis_capture.poll_events()
+        vis_capture.update_renderer()
+        vis_capture.capture_screen_image(temp_image, do_render=True)
+        vis_capture.destroy_window()
+
+        if os.path.exists(temp_image):
+            file_size = os.path.getsize(temp_image)
+            print(f"    ✓ 图像已保存 ({file_size} bytes)")
         else:
-            # 缺失距离 - 灰色
-            colors[i] = [0.5, 0.5, 0.5]
+            print(f"    ✗ 图像保存失败!")
+            raise RuntimeError("热力图生成失败")
 
-    # 7. 应用颜色到mesh（使用MATLAB风格光照）
-    mesh.compute_vertex_normals()
-    normals = np.asarray(mesh.vertex_normals)
+        print(f"\n生成PDF报告: {output_pdf}")
 
-    # 参考MATLAB风格: 单光源从正前方，material dull
-    light_dir = np.array([0.0, 0.0, 1.0])
-    ambient = 0.3
-    dot = np.clip(np.sum(normals * light_dir, axis=1), 0, 1)
-    intensities = ambient + (1 - ambient) * dot
+        output_dir = os.path.dirname(output_pdf)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print(f"  创建输出目录: {output_dir}")
 
-    # 将光照强度应用到颜色上
-    colors = colors * intensities[:, np.newaxis]
-    mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
+        with PdfPages(output_pdf) as pdf:
+            img = Image.open(temp_image)
+            img_array = np.array(img)
 
-    # 8. 使用Open3D捕获渲染图像
-    print("\n生成热力图...")
-    print("  使用Open3D渲染...")
+            if len(img_array.shape) == 3:
+                non_white = np.any(img_array < 250, axis=2)
+            else:
+                non_white = img_array < 250
 
-    # 创建一个隐藏的可视化窗口用于捕获图像
-    vis_capture = o3d.visualization.Visualizer()
-    vis_capture.create_window(window_name="Capture", width=1200, height=900, visible=False)
-    vis_capture.add_geometry(mesh)
+            rows = np.any(non_white, axis=1)
+            cols = np.any(non_white, axis=0)
+            rmin, rmax = np.where(rows)[0][[0, -1]]
+            cmin, cmax = np.where(cols)[0][[0, -1]]
 
-    # 设置渲染选项
-    render_option_capture = vis_capture.get_render_option()
-    render_option_capture.mesh_show_back_face = True
-    render_option_capture.light_on = False  # 关闭Open3D光照，使用预计算的顶点颜色
+            margin = 10
+            rmin = max(0, rmin - margin)
+            rmax = min(img_array.shape[0], rmax + margin)
+            cmin = max(0, cmin - margin)
+            cmax = min(img_array.shape[1], cmax + margin)
 
-    # 设置正交投影
-    view_control_capture = vis_capture.get_view_control()
-    view_control_capture.change_field_of_view(step=-90)
+            img_cropped = img_array[rmin:rmax, cmin:cmax]
 
-    # 更新渲染
-    vis_capture.poll_events()
-    vis_capture.update_renderer()
+            h, w = img_cropped.shape[:2]
+            aspect = w / h
+            fig_height = 8
+            fig_width = fig_height * aspect + 1.5
 
-    # 捕获图像
-    temp_image = "temp_pairing_quality_heatmap.png"
-    vis_capture.capture_screen_image(temp_image, do_render=True)
-    vis_capture.destroy_window()
+            fig1 = plt.figure(figsize=(fig_width, fig_height))
+            ax1 = fig1.add_axes([0.02, 0.05, 0.80, 0.90])
+            ax1.imshow(img_cropped)
+            ax1.axis('off')
+            ax1.set_title(title, fontsize=20, pad=10)
 
-    # 验证图像
-    if os.path.exists(temp_image):
-        file_size = os.path.getsize(temp_image)
-        print(f"    ✓ 图像已保存 ({file_size} bytes)")
+            cax = fig1.add_axes([0.85, 0.05, 0.03, 0.90])
+            create_truncated_colorbar(fig1, cax, cmap, local_max,
+                                      cutoff_distance=cutoff_distance, label='Distance (mm)')
+
+            pdf.savefig(fig1, dpi=300)
+            plt.close(fig1)
+
+        print("\n清理临时文件...")
+        if os.path.exists(temp_image):
+            os.remove(temp_image)
+
+        print(f"\n✓ PDF报告已保存: {output_pdf}")
     else:
-        print(f"    ✗ 图像保存失败!")
-        raise RuntimeError("热力图生成失败")
-
-    # 9. 生成PDF报告
-    print(f"\n生成PDF报告: {output_pdf}")
-
-    # 确保输出目录存在
-    output_dir = os.path.dirname(output_pdf)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"  创建输出目录: {output_dir}")
-
-    with PdfPages(output_pdf) as pdf:
-        # ========== 热力图（只有一页，无统计信息） ==========
-        img = Image.open(temp_image)
-        img_array = np.array(img)
-
-        # 裁剪空白区域：找到非白色像素的边界
-        # 白色像素 RGB 接近 (255, 255, 255)
-        if len(img_array.shape) == 3:
-            non_white = np.any(img_array < 250, axis=2)
-        else:
-            non_white = img_array < 250
-
-        rows = np.any(non_white, axis=1)
-        cols = np.any(non_white, axis=0)
-        rmin, rmax = np.where(rows)[0][[0, -1]]
-        cmin, cmax = np.where(cols)[0][[0, -1]]
-
-        # 添加少量边距
-        margin = 10
-        rmin = max(0, rmin - margin)
-        rmax = min(img_array.shape[0], rmax + margin)
-        cmin = max(0, cmin - margin)
-        cmax = min(img_array.shape[1], cmax + margin)
-
-        img_cropped = img_array[rmin:rmax, cmin:cmax]
-
-        # 根据裁剪后图像的宽高比调整figure大小
-        h, w = img_cropped.shape[:2]
-        aspect = w / h
-        fig_height = 8
-        fig_width = fig_height * aspect + 1.5  # 额外空间给colorbar
-
-        fig1 = plt.figure(figsize=(fig_width, fig_height))
-        ax1 = fig1.add_axes([0.02, 0.05, 0.80, 0.90])
-        ax1.imshow(img_cropped)
-        ax1.axis('off')
-        ax1.set_title('Ground Truth Heatmap', fontsize=20, pad=10)
-
-        # 添加colorbar，高度与图像匹配
-        # 使用截断的colorbar：底部截断显示灰色，cutoff以上使用完整色谱
-        cax = fig1.add_axes([0.85, 0.05, 0.03, 0.90])
-        create_truncated_colorbar(fig1, cax, cmap, local_max,
-                                  cutoff_distance=cutoff_distance, label='Distance (mm)')
-
-        pdf.savefig(fig1, dpi=300)
-        plt.close(fig1)
+        print("\n跳过热力图和PDF生成（generate_visualization=False）")
 
     # 10. 保存统计信息到文件
     if stats_output_path is None:
@@ -520,7 +516,7 @@ def visualize_pairing_quality(obj_path, csv_path, output_pdf='pairing_quality.pd
             f.write("Statistics by Region\n")
             f.write("=" * 60 + "\n")
 
-            for region in range(1, 7):
+            for region in region_ids:
                 region_mask = (region_labels == region) & (~np.isnan(vertex_distances))
                 region_distances = vertex_distances[region_mask]
 
@@ -537,12 +533,6 @@ def visualize_pairing_quality(obj_path, csv_path, output_pdf='pairing_quality.pd
                 else:
                     f.write(f"\nRegion {region}: No valid vertices\n")
 
-    # 11. 清理临时文件
-    print("\n清理临时文件...")
-    if os.path.exists(temp_image):
-        os.remove(temp_image)
-
-    print(f"\n✓ PDF报告已保存: {output_pdf}")
     print(f"✓ 统计信息已保存: {stats_output_path}")
 
     return {
@@ -553,8 +543,9 @@ def visualize_pairing_quality(obj_path, csv_path, output_pdf='pairing_quality.pd
         'max_distance': valid_distances.max(),
         'mse': mse,
         'rmse': rmse,
-        'output_pdf': output_pdf,
-        'stats_file': stats_output_path
+        'output_pdf': output_pdf if generate_visualization else None,
+        'stats_file': stats_output_path,
+        'visualization_generated': generate_visualization
     }
 
 def visualize_mirrored_registration_pairing(
@@ -566,7 +557,8 @@ def visualize_mirrored_registration_pairing(
         region_labels_path='region_labels.txt',
         stats_output_path=None,
         max_distance=None,
-        cutoff_distance=None
+        cutoff_distance=None,
+        generate_visualization=True
 ):
     """
     使用两个OBJ文件进行镜像距离可视化。
@@ -696,6 +688,7 @@ def visualize_mirrored_registration_pairing(
 
     # 6. 加载分区标签
     region_labels = None
+    region_ids = []
     if os.path.exists(region_labels_path):
         print(f"\n加载分区标签: {region_labels_path}")
         region_labels = np.zeros(len(source_vertices), dtype=int)
@@ -709,10 +702,10 @@ def visualize_mirrored_registration_pairing(
                     idx, label = int(parts[0]), int(parts[1])
                     if 0 <= idx < len(source_vertices):
                         region_labels[idx] = label
-        print(f"  加载完成，共6个区域")
+        region_ids = get_region_ids(region_labels)
+        print(f"  加载完成，共{len(region_ids)}个区域")
 
     # 7. 创建颜色映射到所有顶点
-    print(f"\n准备可视化...")
     vertex_distances = np.zeros(len(source_vertices))
     vertex_distances[:] = np.nan  # 默认无效
 
@@ -727,139 +720,127 @@ def visualize_mirrored_registration_pairing(
 
     print(f"  有效顶点数: {valid_mask.sum()}/{len(source_vertices)}")
 
-    # 计算colorbar范围
-    # 如果指定了max_distance，使用它作为colorbar范围
-    # 否则使用数据本身的最大值
-    if max_distance is not None:
-        local_max = max_distance
-    else:
-        local_max = valid_distances.max()
+    if generate_visualization:
+        print(f"\n准备可视化...")
 
-    print(f"  colorbar范围: 0 - {local_max:.6f} mm")
-    if cutoff_distance is not None:
-        print(f"  截断值: {cutoff_distance:.6f} mm (以下显示浅灰色)")
+        if max_distance is not None:
+            local_max = max_distance
+        else:
+            local_max = valid_distances.max()
 
-    cmap = plt.get_cmap(colormap)
+        print(f"  colorbar范围: 0 - {local_max:.6f} mm")
+        if cutoff_distance is not None:
+            print(f"  截断值: {cutoff_distance:.6f} mm (以下显示浅灰色)")
 
-    # 为visualization_mesh着色
-    # cutoff以下用灰色，cutoff到local_max使用完整色谱
-    colors = np.zeros((len(source_vertices), 3))
-    for i in range(len(source_vertices)):
-        if valid_mask[i]:
-            dist = vertex_distances[i]
-            if cutoff_distance is not None and dist <= cutoff_distance:
-                # 低于截断值 - 浅灰色
-                colors[i] = [0.85, 0.85, 0.85]
-            else:
-                # 有效距离 - 使用完整色谱 [cutoff_distance, local_max] -> [0, 1]
-                if cutoff_distance is not None and local_max > cutoff_distance:
-                    normalized_val = (dist - cutoff_distance) / (local_max - cutoff_distance)
+        cmap = plt.get_cmap(colormap)
+        colors = np.zeros((len(source_vertices), 3))
+        for i in range(len(source_vertices)):
+            if valid_mask[i]:
+                dist = vertex_distances[i]
+                if cutoff_distance is not None and dist <= cutoff_distance:
+                    colors[i] = [0.85, 0.85, 0.85]
                 else:
-                    normalized_val = dist / local_max
-                normalized_val = min(1.0, max(0.0, normalized_val))  # 限制在 [0, 1]
-                colors[i] = cmap(normalized_val)[:3]
+                    if cutoff_distance is not None and local_max > cutoff_distance:
+                        normalized_val = (dist - cutoff_distance) / (local_max - cutoff_distance)
+                    else:
+                        normalized_val = dist / local_max
+                    normalized_val = min(1.0, max(0.0, normalized_val))
+                    colors[i] = cmap(normalized_val)[:3]
+            else:
+                colors[i] = [0.5, 0.5, 0.5]
+
+        visualization_mesh.compute_vertex_normals()
+        normals = np.asarray(visualization_mesh.vertex_normals)
+
+        light_dir = np.array([0.0, 0.0, 1.0])
+        ambient = 0.3
+        dot = np.clip(np.sum(normals * light_dir, axis=1), 0, 1)
+        intensities = ambient + (1 - ambient) * dot
+
+        colors = colors * intensities[:, np.newaxis]
+        visualization_mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
+
+        print(f"\n生成热力图...")
+        print("  使用Open3D渲染...")
+
+        temp_image = "temp_mirrored_registration_heatmap.png"
+        vis_capture = o3d.visualization.Visualizer()
+        vis_capture.create_window(window_name="Capture", width=1200, height=900, visible=False)
+        vis_capture.add_geometry(visualization_mesh)
+
+        render_option_capture = vis_capture.get_render_option()
+        render_option_capture.mesh_show_back_face = True
+        render_option_capture.light_on = False
+
+        view_control_capture = vis_capture.get_view_control()
+        view_control_capture.change_field_of_view(step=-90)
+
+        vis_capture.poll_events()
+        vis_capture.update_renderer()
+        vis_capture.capture_screen_image(temp_image, do_render=True)
+        vis_capture.destroy_window()
+
+        if os.path.exists(temp_image):
+            file_size = os.path.getsize(temp_image)
+            print(f"    ✓ 图像已保存 ({file_size} bytes)")
         else:
-            colors[i] = [0.5, 0.5, 0.5]  # 灰色表示无效
+            print(f"    ✗ 图像保存失败!")
+            raise RuntimeError("热力图生成失败")
 
-    # 8. 应用颜色到mesh（使用MATLAB风格光照）
-    visualization_mesh.compute_vertex_normals()
-    normals = np.asarray(visualization_mesh.vertex_normals)
+        print(f"\n生成PDF报告: {output_pdf}")
 
-    # 参考MATLAB风格: 单光源从正前方，material dull
-    light_dir = np.array([0.0, 0.0, 1.0])
-    ambient = 0.3
-    dot = np.clip(np.sum(normals * light_dir, axis=1), 0, 1)
-    intensities = ambient + (1 - ambient) * dot
+        output_dir = os.path.dirname(output_pdf)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print(f"  创建输出目录: {output_dir}")
 
-    # 将光照强度应用到颜色上
-    colors = colors * intensities[:, np.newaxis]
-    visualization_mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
+        with PdfPages(output_pdf) as pdf:
+            img = Image.open(temp_image)
+            img_array = np.array(img)
 
-    # 9. 使用Open3D捕获渲染图像
-    print(f"\n生成热力图...")
-    print("  使用Open3D渲染...")
+            if len(img_array.shape) == 3:
+                non_white = np.any(img_array < 250, axis=2)
+            else:
+                non_white = img_array < 250
 
-    vis_capture = o3d.visualization.Visualizer()
-    vis_capture.create_window(window_name="Capture", width=1200, height=900, visible=False)
-    vis_capture.add_geometry(visualization_mesh)
+            rows = np.any(non_white, axis=1)
+            cols = np.any(non_white, axis=0)
+            rmin, rmax = np.where(rows)[0][[0, -1]]
+            cmin, cmax = np.where(cols)[0][[0, -1]]
 
-    render_option_capture = vis_capture.get_render_option()
-    render_option_capture.mesh_show_back_face = True
-    render_option_capture.light_on = False  # 关闭Open3D光照，使用预计算的顶点颜色
+            margin = 10
+            rmin = max(0, rmin - margin)
+            rmax = min(img_array.shape[0], rmax + margin)
+            cmin = max(0, cmin - margin)
+            cmax = min(img_array.shape[1], cmax + margin)
 
-    # 设置正交投影
-    view_control_capture = vis_capture.get_view_control()
-    view_control_capture.change_field_of_view(step=-90)
+            img_cropped = img_array[rmin:rmax, cmin:cmax]
 
-    vis_capture.poll_events()
-    vis_capture.update_renderer()
+            h, w = img_cropped.shape[:2]
+            aspect = w / h
+            fig_height = 8
+            fig_width = fig_height * aspect + 1.5
 
-    temp_image = "temp_mirrored_registration_heatmap.png"
-    vis_capture.capture_screen_image(temp_image, do_render=True)
-    vis_capture.destroy_window()
+            fig1 = plt.figure(figsize=(fig_width, fig_height))
+            ax1 = fig1.add_axes([0.02, 0.05, 0.80, 0.90])
+            ax1.imshow(img_cropped)
+            ax1.axis('off')
+            ax1.set_title('Ground Truth Heatmap', fontsize=20, pad=10)
 
-    # 验证图像
-    if os.path.exists(temp_image):
-        file_size = os.path.getsize(temp_image)
-        print(f"    ✓ 图像已保存 ({file_size} bytes)")
+            cax = fig1.add_axes([0.85, 0.05, 0.03, 0.90])
+            create_truncated_colorbar(fig1, cax, cmap, local_max,
+                                      cutoff_distance=cutoff_distance, label='Distance (mm)')
+
+            pdf.savefig(fig1, dpi=300)
+            plt.close(fig1)
+
+        print("\n清理临时文件...")
+        if os.path.exists(temp_image):
+            os.remove(temp_image)
+
+        print(f"\n✓ PDF报告已保存: {output_pdf}")
     else:
-        print(f"    ✗ 图像保存失败!")
-        raise RuntimeError("热力图生成失败")
-
-    # 10. 生成PDF报告
-    print(f"\n生成PDF报告: {output_pdf}")
-
-    # 确保输出目录存在
-    output_dir = os.path.dirname(output_pdf)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"  创建输出目录: {output_dir}")
-
-    with PdfPages(output_pdf) as pdf:
-        # ========== 热力图（只有一页，无统计信息） ==========
-        img = Image.open(temp_image)
-        img_array = np.array(img)
-
-        # 裁剪空白区域：找到非白色像素的边界
-        if len(img_array.shape) == 3:
-            non_white = np.any(img_array < 250, axis=2)
-        else:
-            non_white = img_array < 250
-
-        rows = np.any(non_white, axis=1)
-        cols = np.any(non_white, axis=0)
-        rmin, rmax = np.where(rows)[0][[0, -1]]
-        cmin, cmax = np.where(cols)[0][[0, -1]]
-
-        # 添加少量边距
-        margin = 10
-        rmin = max(0, rmin - margin)
-        rmax = min(img_array.shape[0], rmax + margin)
-        cmin = max(0, cmin - margin)
-        cmax = min(img_array.shape[1], cmax + margin)
-
-        img_cropped = img_array[rmin:rmax, cmin:cmax]
-
-        # 根据裁剪后图像的宽高比调整figure大小
-        h, w = img_cropped.shape[:2]
-        aspect = w / h
-        fig_height = 8
-        fig_width = fig_height * aspect + 1.5  # 额外空间给colorbar
-
-        fig1 = plt.figure(figsize=(fig_width, fig_height))
-        ax1 = fig1.add_axes([0.02, 0.05, 0.80, 0.90])
-        ax1.imshow(img_cropped)
-        ax1.axis('off')
-        ax1.set_title('Ground Truth Heatmap', fontsize=20, pad=10)
-
-        # 添加colorbar，高度与图像匹配
-        # 使用截断的colorbar：底部截断显示灰色，cutoff以上使用完整色谱
-        cax = fig1.add_axes([0.85, 0.05, 0.03, 0.90])
-        create_truncated_colorbar(fig1, cax, cmap, local_max,
-                                  cutoff_distance=cutoff_distance, label='Distance (mm)')
-
-        pdf.savefig(fig1, dpi=300)
-        plt.close(fig1)
+        print("\n跳过热力图和PDF生成（generate_visualization=False）")
 
     # 11. 保存统计信息到文件
     if stats_output_path is None:
@@ -904,7 +885,7 @@ def visualize_mirrored_registration_pairing(
             f.write("Statistics by Region\n")
             f.write("=" * 60 + "\n")
 
-            for region in range(1, 7):
+            for region in region_ids:
                 region_mask = (region_labels == region) & (~np.isnan(vertex_distances))
                 region_distances = vertex_distances[region_mask]
 
@@ -921,18 +902,12 @@ def visualize_mirrored_registration_pairing(
                 else:
                     f.write(f"\nRegion {region}: No valid vertices\n")
 
-    # 12. 清理临时文件
-    print("\n清理临时文件...")
-    if os.path.exists(temp_image):
-        os.remove(temp_image)
-
-    print(f"\n✓ PDF报告已保存: {output_pdf}")
     print(f"✓ 统计信息已保存: {stats_output_path}")
 
     # 计算分区统计用于返回
     region_stats_dict = {}
     if region_labels is not None:
-        for region in range(1, 7):
+        for region in region_ids:
             region_mask = (region_labels == region) & (~np.isnan(vertex_distances))
             region_distances = vertex_distances[region_mask]
 
@@ -964,9 +939,10 @@ def visualize_mirrored_registration_pairing(
         'mse': mse,
         'rmse': rmse,
         'pct_within': overall_stats['pct_within'],
-        'output_pdf': output_pdf,
+        'output_pdf': output_pdf if generate_visualization else None,
         'stats_file': stats_output_path,
-        'region_stats': region_stats_dict
+        'region_stats': region_stats_dict,
+        'visualization_generated': generate_visualization
     }
 
 
@@ -977,7 +953,8 @@ def batch_visualize_mirror_distance(
         colormap='jet',
         region_labels_path='region_labels.txt',
         max_distance=None,
-        cutoff_distance=None
+        cutoff_distance=None,
+        generate_visualization=True
 ):
     """
     批量处理目录下的所有原始和镜像OBJ文件对，为每一对生成热力图PDF
@@ -994,6 +971,7 @@ def batch_visualize_mirror_distance(
         region_labels_path: 分区标签文件路径
         max_distance: colorbar最大值（None则自动计算）
         cutoff_distance: 截断值，distance <= cutoff时显示浅灰色
+        generate_visualization: 是否生成热力图/PDF，False时仅输出统计结果
 
     返回:
         处理结果列表，包含每个文件对的统计信息
@@ -1051,8 +1029,9 @@ def batch_visualize_mirror_distance(
         print(f"  镜像文件: {mirrored_path}")
         print(f"  输出PDF: {output_pdf}")
 
-        # 从文件名提取max_distance（第一个数字 * 2）
-        file_max_distance = extract_max_from_filename(filename)
+        # 从文件名提取max_distance（xiahedian用offset，其他用offset*2）
+        multiplier = 1 if 'xiahedian' in input_dir else 2
+        file_max_distance = extract_max_from_filename(filename, multiplier=multiplier)
         if file_max_distance is not None:
             print(f"  从文件名提取的colorbar最大值: {file_max_distance} mm")
         else:
@@ -1068,7 +1047,8 @@ def batch_visualize_mirror_distance(
                 colormap=colormap,
                 region_labels_path=region_labels_path,
                 max_distance=file_max_distance,
-                cutoff_distance=cutoff_distance
+                cutoff_distance=cutoff_distance,
+                generate_visualization=generate_visualization
             )
             result['original_file'] = filename
             results.append(result)
@@ -1109,6 +1089,13 @@ def save_summary_statistics(results, output_csv, method_name='Ground Truth'):
         print("  警告: 没有有效结果可保存")
         return
 
+    region_ids = sorted({
+        int(region)
+        for result in valid_results
+        for region in result.get('region_stats', {}).keys()
+        if int(region) > 0
+    })
+
     with open(output_csv, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
 
@@ -1116,7 +1103,7 @@ def save_summary_statistics(results, output_csv, method_name='Ground Truth'):
         header = ['Filename', 'Total_Vertices', 'Mean', 'Median', 'Std', 'Min', 'Max', 'RMSE', 'Pct_Within_Cutoff']
 
         # 添加分区统计列
-        for region in range(1, 7):
+        for region in region_ids:
             header.extend([
                 f'R{region}_Count', f'R{region}_Mean', f'R{region}_Max', f'R{region}_RMSE', f'R{region}_Pct_Within'
             ])
@@ -1126,10 +1113,12 @@ def save_summary_statistics(results, output_csv, method_name='Ground Truth'):
         # 写入每个文件的数据
         for result in valid_results:
             # 获取文件名
-            if 'original_file' in result:
+            if result.get('original_file'):
                 filename = result['original_file']
-            elif 'output_pdf' in result:
+            elif result.get('output_pdf'):
                 filename = os.path.basename(result['output_pdf'])
+            elif result.get('stats_file'):
+                filename = os.path.basename(result['stats_file'])
             else:
                 filename = 'unknown'
 
@@ -1147,7 +1136,7 @@ def save_summary_statistics(results, output_csv, method_name='Ground Truth'):
 
             # 添加分区统计
             region_stats = result.get('region_stats', {})
-            for region in range(1, 7):
+            for region in region_ids:
                 if region in region_stats:
                     stats = region_stats[region]
                     row.extend([
@@ -1179,7 +1168,8 @@ if __name__ == "__main__":
         colormap='jet',
         region_labels_path='region_labels.txt',
         max_distance=None,      # None表示自动计算每个文件的最大值
-        cutoff_distance=0.5     # 设置截断值
+        cutoff_distance=0.5,    # 设置截断值
+        generate_visualization=False
     )
     # 保存汇总统计
     save_summary_statistics(
@@ -1188,19 +1178,37 @@ if __name__ == "__main__":
         method_name='Ground Truth'
     )
 
-    # 处理bijian目录
+    #处理bijian目录
     results_bijian = batch_visualize_mirror_distance(
         input_dir='bijian',
         csv_path='pairs.csv',
         colormap='jet',
         region_labels_path='region_labels.txt',
         max_distance=None,      # None表示自动计算每个文件的最大值
-        cutoff_distance=0.5     # 设置截断值
+        cutoff_distance=0.5,    # 设置截断值
+        generate_visualization=False
     )
     # 保存汇总统计
     save_summary_statistics(
         results_bijian,
         output_csv='bijian/ground_truth/ground_truth_summary_statistics.csv',
+        method_name='Ground Truth'
+    )
+
+    # 处理xiahedian目录
+    results_xiahedian = batch_visualize_mirror_distance(
+        input_dir='xiahedian',
+        csv_path='pairs.csv',
+        colormap='jet',
+        region_labels_path='region_labels.txt',
+        max_distance=None,  # None表示自动计算每个文件的最大值
+        cutoff_distance=0.5,  # 设置截断值
+        generate_visualization=False
+    )
+    # 保存汇总统计
+    save_summary_statistics(
+        results_xiahedian,
+        output_csv='xiahedian/ground_truth/ground_truth_summary_statistics.csv',
         method_name='Ground Truth'
     )
 

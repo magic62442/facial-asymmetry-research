@@ -2,6 +2,7 @@ import open3d as o3d
 import numpy as np
 from scipy.spatial import KDTree
 import os
+from view_template import mirror_obj_file
 
 
 def local_laplacian_smooth(mesh, center_y, y_range=10.0, iterations=5, lambda_factor=0.5):
@@ -177,6 +178,12 @@ def gaussian_normal_displacement(obj_path, csv_path, landmark_idx, A, r, sigma=1
 
     if success:
         print(f"\n已保存到: {output_path}")
+
+        # 同时生成镜像文件
+        name, ext = os.path.splitext(output_path)
+        mirrored_path = f"{name}_mirrored{ext}"
+        mirror_obj_file(output_path, mirrored_path, plane='x')
+
         return output_path
     else:
         print(f"\n保存失败!")
@@ -285,6 +292,12 @@ def gaussian_directional_displacement(obj_path, csv_path, landmark_idx, A, r, si
 
     if success:
         print(f"\n已保存到: {output_path}")
+
+        # 同时生成镜像文件
+        name, ext = os.path.splitext(output_path)
+        mirrored_path = f"{name}_mirrored{ext}"
+        mirror_obj_file(output_path, mirrored_path, plane='x')
+
         return output_path
     else:
         print(f"\n保存失败!")
@@ -463,6 +476,12 @@ def gaussian_directional_displacement_y_distance(obj_path, csv_path, landmark_id
 
     if success:
         print(f"\n已保存到: {output_path}")
+
+        # 同时生成镜像文件
+        name, ext = os.path.splitext(output_path)
+        mirrored_path = f"{name}_mirrored{ext}"
+        mirror_obj_file(output_path, mirrored_path, plane='x')
+
         return output_path
     else:
         print(f"\n保存失败!")
@@ -595,15 +614,15 @@ def batch_generate_directional(obj_path, csv_path, landmark_idx, A_values, r_val
 if __name__ == "__main__":
     # 输入文件
     obj_file = "Template.obj"
-    csv_file = "kedian.csv"
-    landmark_index = 2  # 第三个点（索引从0开始）
+    csv_file = "bijian.csv"
+    landmark_index = 0
     cutoff_distance = 50.0
     output_directory = "bijian"
 
     # 参数配置
     # A_values = [1, 2, 3, 4, 5, 6]  # 幅度
     if csv_file == "kedian.csv":
-        A_values = [12]  # 幅度
+        A_values = [5, 7]  # 幅度
         r_values = [15]  # 核半径
         cutoff_distance = 40.0
         x_decay_radius = 10.0  # x方向衰减半径，越小衰减越快
@@ -637,7 +656,7 @@ if __name__ == "__main__":
         #     apply_x_decay=False  # 不使用x>0衰减
         # )
     elif csv_file == "xiahedian.csv":
-        A_values = [10]  # 幅度
+        A_values = [8]  # 幅度
         r_values = [20]  # 核半径
         cutoff_distance = 70.0
         output_directory = "xiahedian"
@@ -653,7 +672,7 @@ if __name__ == "__main__":
         )
     else:
         # 默认使用普通方向性位移
-        A_values = [1, 2, 3, 4, 5, 6]
+        A_values = [7, 8]
         r_values = [15]
         results = batch_generate_directional(
             obj_path=obj_file,

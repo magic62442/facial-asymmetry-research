@@ -673,8 +673,8 @@ if __name__ == "__main__":
     # query = [0.0000, -61.2906, 43.4027]
     # result = find_closest_vertex(query)
 
-    obj_path = '/Users/lqy/Desktop/research/lele/facial-asymmetry/output_headspace/mapped_templates/61_mapped.obj'
-    csv_path = 'kedian.csv'
+    obj_path = 'bijian/8_50_directional.obj'
+    # csv_path = 'kedian.csv'
     view_3d_model(obj_path)
 
 
@@ -682,9 +682,9 @@ if __name__ == "__main__":
     # print("\n" + "=" * 80)
     # print("批量镜像kedian和bijian目录下的OBJ文件")
     # print("=" * 80)
-    #
-    # # 镜像kedian目录（保存在原目录）
-    # batch_mirror_obj_files('kedian', 'kedian', plane='x')
+
+    # 镜像kedian目录（保存在原目录）
+    # batch_mirror_obj_files('kedian13', 'kedian', plane='x')
     #
     # # 镜像bijian目录（保存在原目录）
     # batch_mirror_obj_files('bijian', 'bijian', plane='x')
